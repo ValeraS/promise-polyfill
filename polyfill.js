@@ -1,0 +1,323 @@
+(function() {
+  'use strict';
+
+  var local;
+  if (typeof window !== 'undefined') {
+    local = window;
+  } else if (typeof global !== 'undefined') {
+    local = global;
+    module.exports = Promise;
+  } else {
+    throw new Error(
+      'Promise polyfill failed because global object is undefined'
+    );
+  }
+
+  if (
+    !(
+      typeof local.Promise !== 'undefined' &&
+      local.Promise.toString().indexOf('[native code]') !== -1
+    )
+  ) {
+    // return;
+    local.Promise = Promise;
+  }
+
+  function checkIsConstructorCall(self) {
+    if (!(self instanceof Promise)) {
+      throw new Error('Promise should be called with new');
+    }
+  }
+
+  function checkIsObject(obj, message) {
+    if (!isObject(obj)) {
+      throw new TypeError(message || 'Not an object: ' + obj);
+    }
+  }
+
+  function checkIsFunction(fn, message) {
+    if (!isFunction(fn)) {
+      throw new TypeError(message || 'Not a function');
+    }
+  }
+
+  function checkIsPromise(x, message) {
+    if (!isPromise(x)) {
+      throw new TypeError(message || 'Not a Promise');
+    }
+  }
+
+  function isObject(obj) {
+    return obj && (typeof obj === 'object' || isFunction(obj));
+  }
+
+  function isFunction(callback) {
+    return typeof callback === 'function';
+  }
+
+  function isCallable(obj) {
+    return isFunction(obj);
+  }
+
+  function isPromise(x) {
+    if (!isObject(x)) {
+      return false;
+    }
+    return x[PROMISE_STATE_SLOT] !== undefined;
+  }
+
+  function isThenable(obj) {
+    return obj && typeof obj.then === 'function';
+  }
+
+  var queue = [];
+  function schedule(job) {
+    if (queue.length === 0) {
+      scheduleExecution();
+    }
+    queue.push(job);
+  }
+
+  function scheduleExecution() {
+    setTimeout(flushQueue, 0);
+  }
+
+  function flushQueue() {
+    var job;
+    while (queue.length > 0) {
+      job = queue[0];
+
+      job();
+
+      queue.shift();
+    }
+  }
+
+  var PENDING = 0;
+  var FULFILLED = 1;
+  var REJECTED = 2;
+
+  var PROMISE_STATE_SLOT = '_promiseState';
+  var PROMISE_REACTIONS_SLOT = '_promiseReactions';
+  var PROMISE_RESULT_SLOT = '_promiseResult';
+
+  var IDENTITY = 'Identity';
+  var THROWER = 'Thrower';
+
+  function promiseReactionJob(reaction, argument) {
+    var capability = reaction.capability;
+    var handler = reaction.handler;
+    if (handler === IDENTITY) {
+      capability.resolve(argument);
+    } else if (handler === THROWER) {
+      capability.reject(argument);
+    } else {
+      try {
+        var handlerResult = handler(argument);
+      } catch (err) {
+        capability.reject(err);
+      }
+      capability.resolve(handlerResult);
+    }
+  }
+
+  function promiseResolveThenableJob(promiseToResolve, thenable, then) {
+    var resolvingFunctions = createResolvingFunctions(promiseToResolve);
+    var resolve = resolvingFunctions.resolve;
+    var reject = resolvingFunctions.reject;
+    try {
+      then.call(thenable, resolve, reject);
+    } catch (err) {
+      reject(err);
+    }
+  }
+
+  function performPromiseThen(
+    promise,
+    onFulfilled,
+    onRejected,
+    resultCapabilities
+  ) {
+    if (promise[PROMISE_STATE_SLOT] === PENDING) {
+      promise[PROMISE_REACTIONS_SLOT].push(
+        resultCapabilities,
+        onFulfilled,
+        onRejected
+      );
+    } else if (promise[PROMISE_STATE_SLOT] === FULFILLED) {
+      schedule(function() {
+        promiseReactionJob(
+          {
+            capability: resultCapabilities,
+            handler: isCallable(onFulfilled) ? onFulfilled : IDENTITY,
+          },
+          promise[PROMISE_RESULT_SLOT]
+        );
+      });
+    } else if (promise[PROMISE_STATE_SLOT] === REJECTED) {
+      schedule(function() {
+        promiseReactionJob(
+          {
+            capability: resultCapabilities,
+            handler: isCallable(onRejected) ? onRejected : THROWER,
+          },
+          promise[PROMISE_RESULT_SLOT]
+        );
+      });
+    }
+    return resultCapabilities.promise;
+  }
+
+  function newPromiseCapability(Constructor) {
+    var capability = {
+      promise: undefined,
+      resolve: undefined,
+      reject: undefined,
+    };
+    var promise = new Constructor(function(resolve, reject) {
+      if (capability.resolve !== undefined) {
+        throw new TypeError('resolve is not undefined');
+      }
+      if (capability.reject !== undefined) {
+        throw new TypeError('reject is not undefined');
+      }
+      capability.resolve = resolve;
+      capability.reject = reject;
+    });
+
+    if (capability.resolve === undefined) {
+      throw new TypeError('resolve is undefined');
+    }
+    if (capability.reject === undefined) {
+      throw new TypeError('reject is undefined');
+    }
+    capability.promise = promise;
+    return capability;
+  }
+
+  function createResolvingFunctions(promise) {
+    var isResolved = false;
+    var resolve = function(resolution) {
+      if (isResolved) {
+        return;
+      }
+      isResolved = true;
+      if (promise === resolution) {
+        return rejectPromise(
+          promise,
+          new TypeError('resolved with the same promise')
+        );
+      }
+      if (!isObject(resolution)) {
+        return fulfillPromise(promise, resolution);
+      }
+      if (!isThenable(resolution)) {
+        return fulfillPromise(promise, resolution);
+      }
+      schedule(function() {
+        promiseResolveThenableJob(promise, resolution, resolution.then);
+      });
+    };
+    var reject = function(reason) {
+      if (isResolved) {
+        return;
+      }
+      isResolved = true;
+      return rejectPromise(promise, reason);
+    };
+    return { resolve: resolve, reject: reject };
+  }
+
+  function fulfillPromise(promise, value) {
+    var reactions = promise[PROMISE_REACTIONS_SLOT];
+    delete promise[PROMISE_REACTIONS_SLOT];
+    promise[PROMISE_RESULT_SLOT] = value;
+    promise[PROMISE_STATE_SLOT] = FULFILLED;
+    for (var i = 0; i < reactions.length; i += 3) {
+      schedule(
+        (function(i) {
+          return function() {
+            promiseReactionJob(
+              {
+                capability: reactions[i],
+                handler: reactions[i + FULFILLED],
+              },
+              value
+            );
+          };
+        })(i)
+      );
+    }
+  }
+
+  function rejectPromise(promise, reason) {
+    var reactions = promise[PROMISE_REACTIONS_SLOT];
+    delete promise[PROMISE_REACTIONS_SLOT];
+    promise[PROMISE_RESULT_SLOT] = reason;
+    promise[PROMISE_STATE_SLOT] = REJECTED;
+    for (var i = 0; i < reactions.length; i += 3) {
+      schedule(
+        (function(i) {
+          return function() {
+            promiseReactionJob(
+              {
+                capability: reactions[i],
+                handler: reactions[i + REJECTED],
+              },
+              reason
+            );
+          };
+        })(i)
+      );
+    }
+  }
+
+  function Promise(executor) {
+    checkIsConstructorCall(this);
+    checkIsFunction(executor);
+    this[PROMISE_STATE_SLOT] = PENDING;
+    this[PROMISE_REACTIONS_SLOT] = [];
+    var resolvingFunctions = createResolvingFunctions(this);
+    var resolve = resolvingFunctions.resolve;
+    var reject = resolvingFunctions.reject;
+    try {
+      executor(resolve, reject);
+    } catch (err) {
+      reject(err);
+    }
+  }
+
+  Promise.prototype.then = function(onFulfilled, onRejected) {
+    checkIsPromise(this);
+    var resultCapabilities = newPromiseCapability(this.constructor);
+    return performPromiseThen(
+      this,
+      onFulfilled,
+      onRejected,
+      resultCapabilities
+    );
+  };
+
+  Promise.prototype.catch = function(onRejected) {
+    return this.then(undefined, onRejected);
+  };
+
+  Promise.reject = function(r) {
+    checkIsObject(this);
+    var capability = newPromiseCapability(this);
+    capability.reject.call(undefined, r);
+    return capability.promise;
+  };
+
+  Promise.resolve = function(x) {
+    checkIsObject(this);
+    if (isPromise(x)) {
+      if (x.constructor === this) {
+        return x;
+      }
+    }
+    var capability = newPromiseCapability(this);
+    capability.resolve.call(undefined, x);
+    return capability.promise;
+  };
+})();
