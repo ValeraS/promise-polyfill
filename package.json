@@ -1,0 +1,13 @@
+{
+  "name": "promise-polyfill",
+  "version": "1.0.0",
+  "main": "index.js",
+  "author": "Valeriy Sidorenko",
+  "license": "MIT",
+  "devDependencies": {
+    "eslint": "^6.4.0",
+    "eslint-config-prettier": "^6.3.0",
+    "eslint-plugin-prettier": "^3.1.1",
+    "prettier": "^1.18.2"
+  }
+}
