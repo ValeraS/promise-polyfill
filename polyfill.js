@@ -23,6 +23,10 @@
     local.Promise = Promise;
   }
 
+  /**
+   * Checks
+   */
+
   function checkIsConstructorCall(self) {
     if (!(self instanceof Promise)) {
       throw new Error('Promise should be called with new');
@@ -70,6 +74,10 @@
     return obj && typeof obj.then === 'function';
   }
 
+  /**
+   * Job queue
+   */
+
   var queue = [];
   function schedule(job) {
     if (queue.length === 0) {
@@ -92,6 +100,10 @@
       queue.shift();
     }
   }
+
+  /**
+   * Promise constants and helpers
+   */
 
   var PENDING = 0;
   var FULFILLED = 1;
@@ -272,6 +284,10 @@
     }
   }
 
+  /**
+   * Promise
+   */
+
   function Promise(executor) {
     checkIsConstructorCall(this);
     checkIsFunction(executor);
@@ -319,5 +335,112 @@
     var capability = newPromiseCapability(this);
     capability.resolve.call(undefined, x);
     return capability.promise;
+  };
+
+  Promise.race = function(promises) {
+    var Constructor = this;
+    checkIsObject(Constructor);
+    if (!Array.isArray(promises)) {
+      return Constructor.reject(new TypeError(promises + ' is not iterable'));
+    }
+    return new Constructor(function(resolve, reject) {
+      for (var i = 0; i < promises.length; i++) {
+        Constructor.resolve(promises[i]).then(resolve, reject);
+      }
+    });
+  };
+
+  Promise.all = function(promises) {
+    var Constructor = this;
+    checkIsObject(Constructor);
+    if (!Array.isArray(promises)) {
+      return Constructor.reject(new TypeError(promises + ' is not iterable'));
+    }
+    if (!promises.length) {
+      return Constructor.resolve(promises);
+    }
+    return new Constructor(function(resolve, reject) {
+      var promiseCount = promises.length;
+      var values = [];
+      for (var i = 0; i < promises.length; i++) {
+        Constructor.resolve(promises[i]).then(
+          (function(i) {
+            return function(value) {
+              values[i] = value;
+              promiseCount--;
+              if (!promiseCount) {
+                resolve(values);
+              }
+            };
+          })(i),
+          reject
+        );
+      }
+    });
+  };
+
+  Promise.allSettled = function(promises) {
+    var Constructor = this;
+    checkIsObject(Constructor);
+    if (!Array.isArray(promises)) {
+      return Constructor.reject(new TypeError(promises + ' is not iterable'));
+    }
+    if (!promises.length) {
+      return Constructor.resolve(promises);
+    }
+    return new Constructor(function(resolve) {
+      var promiseCount = promises.length;
+      var values = [];
+      for (var i = 0; i < promises.length; i++) {
+        Constructor.resolve(promises[i]).then(
+          (function(i) {
+            return function(value) {
+              values[i] = {
+                status: 'fulfilled',
+                value: value,
+              };
+              promiseCount--;
+              if (!promiseCount) {
+                resolve(values);
+              }
+            };
+          })(i),
+          (function(i) {
+            return function(reason) {
+              values[i] = {
+                status: 'rejected',
+                reason: reason,
+              };
+              promiseCount--;
+              if (!promiseCount) {
+                resolve(values);
+              }
+            };
+          })(i)
+        );
+      }
+    });
+  };
+
+  Promise.prototype.finally = function(onFinally) {
+    var promise = this;
+    checkIsObject(this);
+    var Constructor = this.constructor;
+    var thenFinally, catchFinally;
+    if (!isFunction(onFinally)) {
+      thenFinally = catchFinally = onFinally;
+    } else {
+      thenFinally = function(value) {
+        return Constructor.resolve(onFinally()).then(function() {
+          return value;
+        });
+      };
+      catchFinally = function(reason) {
+        return Constructor.resolve(onFinally()).then(function() {
+          throw reason;
+        });
+      };
+    }
+    return promise.then(thenFinally, catchFinally);
   };
 })();
