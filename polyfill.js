@@ -150,18 +150,20 @@
     onRejected,
     resultCapabilities
   ) {
+    var fulfillmentHandler = isCallable(onFulfilled) ? onFulfilled : IDENTITY;
+    var rejectionHandler = isCallable(onRejected) ? onRejected : THROWER;
     if (promise[PROMISE_STATE_SLOT] === PENDING) {
       promise[PROMISE_REACTIONS_SLOT].push(
         resultCapabilities,
-        onFulfilled,
-        onRejected
+        fulfillmentHandler,
+        rejectionHandler
       );
     } else if (promise[PROMISE_STATE_SLOT] === FULFILLED) {
       schedule(function() {
         promiseReactionJob(
           {
             capability: resultCapabilities,
-            handler: isCallable(onFulfilled) ? onFulfilled : IDENTITY,
+            handler: fulfillmentHandler,
           },
           promise[PROMISE_RESULT_SLOT]
         );
@@ -171,7 +173,7 @@
         promiseReactionJob(
           {
             capability: resultCapabilities,
-            handler: isCallable(onRejected) ? onRejected : THROWER,
+            handler: rejectionHandler,
           },
           promise[PROMISE_RESULT_SLOT]
         );
