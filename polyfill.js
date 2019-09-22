@@ -2,11 +2,17 @@
   'use strict';
 
   var local;
+  var nextTick;
   if (typeof window !== 'undefined') {
     local = window;
+    nextTick = useSetTimeout;
+  } else if (typeof self !== 'undefined') {
+    local = self;
+    nextTick = useSetTimeout;
   } else if (typeof global !== 'undefined') {
     local = global;
     module.exports = Promise;
+    nextTick = useNextTick;
   } else {
     throw new Error(
       'Promise polyfill failed because global object is undefined'
@@ -19,7 +25,6 @@
       local.Promise.toString().indexOf('[native code]') !== -1
     )
   ) {
-    // return;
     local.Promise = Promise;
   }
 
@@ -55,8 +60,8 @@
     return obj && (typeof obj === 'object' || isFunction(obj));
   }
 
-  function isFunction(callback) {
-    return typeof callback === 'function';
+  function isFunction(fn) {
+    return typeof fn === 'function';
   }
 
   function isCallable(obj) {
@@ -83,7 +88,7 @@
   }
 
   function scheduleExecution() {
-    setTimeout(flushQueue, 0);
+    nextTick(flushQueue);
   }
 
   function flushQueue() {
@@ -95,6 +100,14 @@
 
       queue.shift();
     }
+  }
+
+  function useSetTimeout(fn) {
+    setTimeout(fn, 0);
+  }
+
+  function useNextTick(fn) {
+    process.nextTick(fn);
   }
 
   /**
@@ -427,8 +440,8 @@
 
   Promise.prototype.finally = function(onFinally) {
     var promise = this;
-    checkIsObject(this);
-    var Constructor = this.constructor;
+    checkIsObject(promise);
+    var Constructor = promise.constructor;
     var thenFinally, catchFinally;
     if (!isFunction(onFinally)) {
       thenFinally = catchFinally = onFinally;
@@ -445,5 +458,15 @@
       };
     }
     return promise.then(thenFinally, catchFinally);
+  };
+
+  Promise.prototype.done = function() {
+    var promise = this;
+    checkIsObject(promise);
+    promise.then(undefined, function(err) {
+      nextTick(function() {
+        throw err;
+      });
+    });
   };
 })();

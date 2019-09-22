@@ -146,4 +146,6 @@ Promise.allSettled([
   }
 );
 
+// Promise.reject(new Error(42)).done(); // should throw an error
+
 console.log('Результат работы:');
