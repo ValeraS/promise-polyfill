@@ -70,10 +70,6 @@
     return x[PROMISE_STATE_SLOT] !== undefined;
   }
 
-  function isThenable(obj) {
-    return obj && typeof obj.then === 'function';
-  }
-
   /**
    * Job queue
    */
@@ -225,11 +221,16 @@
       if (!isObject(resolution)) {
         return fulfillPromise(promise, resolution);
       }
-      if (!isThenable(resolution)) {
+      try {
+        var thenAction = resolution.then;
+      } catch (err) {
+        return rejectPromise(promise, err);
+      }
+      if (!isCallable(thenAction)) {
         return fulfillPromise(promise, resolution);
       }
       schedule(function() {
-        promiseResolveThenableJob(promise, resolution, resolution.then);
+        promiseResolveThenableJob(promise, resolution, thenAction);
       });
     };
     var reject = function(reason) {
